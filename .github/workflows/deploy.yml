@@ -1,101 +1,70 @@
-name: CI/CD CRUD API
+name: CI/CD - Cloud Run
 
 on:
   push:
     tags:
-      - 'v.*.*'
+      - 'v*.*.*'    # déclenche le workflow sur un tag
   workflow_dispatch:
 
 jobs:
   build-and-deploy:
     runs-on: ubuntu-latest
 
-    env:
-      # ===== Repository Variables =====
-      CLOUD_RUN_SERVICE_NAME: ${{ vars.CLOUD_RUN_SERVICE_NAME }}
-      REGION: ${{ vars.REGION }}
-      VERSION: ${{ github.ref_name }}
-      DB_HOST: ${{ vars.DB_HOST }}
-      DB_PORT: ${{ vars.DB_PORT }}
-      DB_USER: ${{ vars.DB_USER }}
-      DB_NAME: ${{ vars.DB_NAME }}
-      LOKI_URL: ${{ vars.LOKI_URL }}
-
-      # ===== Secrets =====
-      DOCKER_USERNAME: ${{ secrets.DOCKER_HUB_USERNAME }}
-      DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
-      GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
-
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
-      - name: Extract tag version
-        id: extract_version
-        run: echo "VERSION=${GITHUB_REF##*/}" >> $GITHUB_ENV
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v2
+      - name: Get version from tag
+        run: echo "VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_ENV
 
       - name: Login to Docker Hub
-        uses: docker/login-action@v2
+        run: |
+          echo "${{ secrets.DOCKER_HUB_PASSWORD }}" | docker login -u "${{ secrets.DOCKER_HUB_USERNAME }}" --password-stdin
+
+      - name: Build and push API image
+        run: |
+          docker build -t ${{ secrets.DOCKER_HUB_USERNAME }}/crud-api:${{ env.VERSION }} -t ${{ secrets.DOCKER_HUB_USERNAME }}/crud-api:latest ./App
+          docker push ${{ secrets.DOCKER_HUB_USERNAME }}/crud-api:${{ env.VERSION }}
+          docker push ${{ secrets.DOCKER_HUB_USERNAME }}/crud-api:latest
+
+      - name: Authenticate Google Cloud
+        uses: google-github-actions/auth@v2
         with:
-          username: ${{ secrets.DOCKER_HUB_USERNAME }}
-          password: ${{ secrets.DOCKER_HUB_PASSWORD }}
-
-      - name: Build & push CRUD API Docker image
-        run: |
-          docker build -t $DOCKER_USERNAME/crud-api:$VERSION ./App
-          docker push $DOCKER_USERNAME/crud-api:$VERSION
-          docker tag $DOCKER_USERNAME/crud-api:$VERSION $DOCKER_USERNAME/crud-api:latest
-          docker push $DOCKER_USERNAME/crud-api:latest
-
-      - name: Build & push Fluent Bit Docker image
-        run: |
-          docker build -t $DOCKER_USERNAME/fluent-bit:$VERSION ./fluent-bit
-          docker push $DOCKER_USERNAME/fluent-bit:$VERSION
-          docker tag $DOCKER_USERNAME/fluent-bit:$VERSION $DOCKER_USERNAME/fluent-bit:latest
-          docker push $DOCKER_USERNAME/fluent-bit:latest
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
 
       - name: Setup Google Cloud SDK
-        uses: google-github-actions/setup-gcloud@v1
+        uses: google-github-actions/setup-gcloud@v2
         with:
-          service_account_key: ${{ secrets.GCP_SA_KEY }}
           project_id: ${{ secrets.GCP_PROJECT_ID }}
+          export_default_credentials: true
 
-      - name: Simulate Flyway migrations
+      - name: Replace variables in cloud-run-service.yaml
         run: |
-          echo "Simulating Flyway migrations..."
-          echo "JDBC_URL would be: jdbc:mysql://${DB_HOST}:${DB_PORT}/${DB_NAME}"
-          echo "DB_USER: $DB_USER"
-          echo "Migrations folder: $PWD/db/migrations"
-          echo "✅ Migrations skipped (simulation)"
-
-      - name: Generate Cloud Run YAML from variables
-        run: |
-          cp cloud-run-service.yaml cloud-run-service.generated.yaml
-          sed -i "s/{{DOCKER_USERNAME}}/$DOCKER_USERNAME/g" cloud-run-service.generated.yaml
-          sed -i "s/{{VERSION}}/$VERSION/g" cloud-run-service.generated.yaml
-          sed -i "s/{{CLOUD_RUN_SERVICE_NAME}}/$CLOUD_RUN_SERVICE_NAME/g" cloud-run-service.generated.yaml
-          sed -i "s/{{DB_HOST}}/$DB_HOST/g" cloud-run-service.generated.yaml
-          sed -i "s/{{DB_USER}}/$DB_USER/g" cloud-run-service.generated.yaml
-          sed -i "s/{{DB_PASSWORD}}/$DB_PASSWORD/g" cloud-run-service.generated.yaml
-          sed -i "s/{{DB_NAME}}/$DB_NAME/g" cloud-run-service.generated.yaml
-          sed -i "s#{{LOKI_URL}}#$LOKI_URL#g" cloud-run-service.generated.yaml
+          sed -i "s|__IMAGE_URI__|docker.io/${{ secrets.DOCKER_HUB_USERNAME }}/crud-api:${{ env.VERSION }}|g" cloud-run-service.yaml
+          sed -i "s|__DB_HOST__|${{ vars.DB_HOST }}|g" cloud-run-service.yaml
+          sed -i "s|__DB_NAME__|${{ vars.DB_NAME }}|g" cloud-run-service.yaml
+          sed -i "s|__DB_USER__|${{ vars.DB_USER }}|g" cloud-run-service.yaml
+          sed -i "s|__DB_PASSWORD__|${{ secrets.DB_PASSWORD }}|g" cloud-run-service.yaml
+          sed -i "s|__LOKI_URL__|${{ vars.LOKI_URL }}|g" cloud-run-service.yaml
+          sed -i "s|__REGION__|${{ vars.REGION }}|g" cloud-run-service.yaml
+          sed -i "s|__PROJECT_ID__|${{ secrets.GCP_PROJECT_ID }}|g" cloud-run-service.yaml
 
       - name: Deploy to Cloud Run
         run: |
-          gcloud run deploy "$CLOUD_RUN_SERVICE_NAME" \
-            --project "$GCP_PROJECT_ID" \
-            --region "$REGION" \
+          gcloud run deploy crud-api \
+            --image docker.io/${{ secrets.DOCKER_HUB_USERNAME }}/crud-api:${{ env.VERSION }} \
+            --region ${{ vars.REGION }} \
             --platform managed \
             --allow-unauthenticated \
-            --image "$DOCKER_USERNAME/crud-api:$VERSION"
+            --set-env-vars DB_HOST=${{ vars.DB_HOST }} \
+            --set-env-vars DB_NAME=${{ vars.DB_NAME }} \
+            --set-env-vars DB_USER=${{ vars.DB_USER }} \
+            --set-env-vars DB_PASSWORD=${{ secrets.DB_PASSWORD }} \
+            --set-env-vars LOKI_URL=${{ vars.LOKI_URL }}
 
-      - name: Ensure service is publicly invokable
+      - name: Allow unauthenticated access
         run: |
-          gcloud run services add-iam-policy-binding "$CLOUD_RUN_SERVICE_NAME" \
+          gcloud run services add-iam-policy-binding crud-api \
+            --region=${{ vars.REGION }} \
             --member="allUsers" \
-            --role="roles/run.invoker" \
-            --region "$REGION" \
-            --project "$GCP_PROJECT_ID"
+            --role="roles/run.invoker"
