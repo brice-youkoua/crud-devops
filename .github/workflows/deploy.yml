@@ -1,10 +1,9 @@
-name: CI/CD - Cloud Run
+name: CI/CD - Cloud Run (TP)
 
 on:
   push:
     tags:
-      - 'v*.*.*'    # déclenche le workflow sur un tag
-  workflow_dispatch:
+      - 'v*.*.*'  # déclenche sur les tags vX.X.X
 
 jobs:
   build-and-deploy:
@@ -27,7 +26,7 @@ jobs:
           docker push ${{ secrets.DOCKER_HUB_USERNAME }}/crud-api:${{ env.VERSION }}
           docker push ${{ secrets.DOCKER_HUB_USERNAME }}/crud-api:latest
 
-      - name: Authenticate Google Cloud
+      - name: Authenticate with Google Cloud
         uses: google-github-actions/auth@v2
         with:
           credentials_json: ${{ secrets.GCP_SA_KEY }}
@@ -40,31 +39,32 @@ jobs:
 
       - name: Replace variables in cloud-run-service.yaml
         run: |
-          sed -i "s|__IMAGE_URI__|docker.io/${{ secrets.DOCKER_HUB_USERNAME }}/crud-api:${{ env.VERSION }}|g" cloud-run-service.yaml
-          sed -i "s|__DB_HOST__|${{ vars.DB_HOST }}|g" cloud-run-service.yaml
-          sed -i "s|__DB_NAME__|${{ vars.DB_NAME }}|g" cloud-run-service.yaml
-          sed -i "s|__DB_USER__|${{ vars.DB_USER }}|g" cloud-run-service.yaml
-          sed -i "s|__DB_PASSWORD__|${{ secrets.DB_PASSWORD }}|g" cloud-run-service.yaml
-          sed -i "s|__LOKI_URL__|${{ vars.LOKI_URL }}|g" cloud-run-service.yaml
-          sed -i "s|__REGION__|${{ vars.REGION }}|g" cloud-run-service.yaml
-          sed -i "s|__PROJECT_ID__|${{ secrets.GCP_PROJECT_ID }}|g" cloud-run-service.yaml
+          cp cloud-run-service.yaml cloud-run-service.generated.yaml
+          sed -i "s|__IMAGE_URI__|docker.io/${{ secrets.DOCKER_HUB_USERNAME }}/crud-api:${{ env.VERSION }}|g" cloud-run-service.generated.yaml
+          sed -i "s|__DB_HOST__|${{ secrets.DB_HOST }}|g" cloud-run-service.generated.yaml
+          sed -i "s|__DB_NAME__|${{ secrets.DB_NAME }}|g" cloud-run-service.generated.yaml
+          sed -i "s|__DB_USER__|${{ secrets.DB_USER }}|g" cloud-run-service.generated.yaml
+          sed -i "s|__DB_PASSWORD__|${{ secrets.DB_PASSWORD }}|g" cloud-run-service.generated.yaml
+          sed -i "s|__LOKI_URL__|${{ secrets.LOKI_URL }}|g" cloud-run-service.generated.yaml
+          sed -i "s|__REGION__|${{ secrets.GCP_REGION }}|g" cloud-run-service.generated.yaml
+          sed -i "s|__PROJECT_ID__|${{ secrets.GCP_PROJECT_ID }}|g" cloud-run-service.generated.yaml
 
       - name: Deploy to Cloud Run
         run: |
           gcloud run deploy crud-api \
             --image docker.io/${{ secrets.DOCKER_HUB_USERNAME }}/crud-api:${{ env.VERSION }} \
-            --region ${{ vars.REGION }} \
+            --region ${{ secrets.GCP_REGION }} \
             --platform managed \
             --allow-unauthenticated \
-            --set-env-vars DB_HOST=${{ vars.DB_HOST }} \
-            --set-env-vars DB_NAME=${{ vars.DB_NAME }} \
-            --set-env-vars DB_USER=${{ vars.DB_USER }} \
+            --set-env-vars DB_HOST=${{ secrets.DB_HOST }} \
+            --set-env-vars DB_NAME=${{ secrets.DB_NAME }} \
+            --set-env-vars DB_USER=${{ secrets.DB_USER }} \
             --set-env-vars DB_PASSWORD=${{ secrets.DB_PASSWORD }} \
-            --set-env-vars LOKI_URL=${{ vars.LOKI_URL }}
+            --set-env-vars LOKI_URL=${{ secrets.LOKI_URL }}
 
       - name: Allow unauthenticated access
         run: |
           gcloud run services add-iam-policy-binding crud-api \
-            --region=${{ vars.REGION }} \
+            --region=${{ secrets.GCP_REGION }} \
             --member="allUsers" \
             --role="roles/run.invoker"
