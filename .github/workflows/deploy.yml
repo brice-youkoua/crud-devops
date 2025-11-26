@@ -67,12 +67,10 @@ jobs:
         run: |
           JDBC_URL="jdbc:mysql://${DB_HOST}:${DB_PORT}/${DB_NAME}"
 
-          docker run --rm \
-            -e FLYWAY_URL="$JDBC_URL" \
-            -e FLYWAY_USER="$DB_USER" \
-            -e FLYWAY_PASSWORD="$DB_PASSWORD" \
-            -v "$PWD/db/migrations":/flyway/sql \
-            flyway/flyway:9 migrate
+          echo "JDBC_URL would be: jdbc:mysql://${DB_HOST}:${DB_PORT}/${DB_NAME}"
+          echo "DB_USER: $DB_USER"
+          echo "Migrations folder: $PWD/db/migrations"
+          echo " Migrations skipped (simulation)"
 
       - name: Generate Cloud Run YAML from variables
         run: |
