@@ -25,6 +25,7 @@ jobs:
       DOCKER_USERNAME: ${{ secrets.DOCKER_HUB_USERNAME }}
       DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
       GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+      GCP_SA_KEY: ${{ secrets.GCP_SA_KEY }}
 
     steps:
       - name: Checkout repository
@@ -63,14 +64,13 @@ jobs:
           service_account_key: ${{ secrets.GCP_SA_KEY }}
           project_id: ${{ secrets.GCP_PROJECT_ID }}
 
-      - name: Run Flyway migrations (MySQL)
+      - name: Flyway migrations
         run: |
-          JDBC_URL="jdbc:mysql://${DB_HOST}:${DB_PORT}/${DB_NAME}"
-
+          echo "Simulating Flyway migrations..."
           echo "JDBC_URL would be: jdbc:mysql://${DB_HOST}:${DB_PORT}/${DB_NAME}"
           echo "DB_USER: $DB_USER"
           echo "Migrations folder: $PWD/db/migrations"
-          echo " Migrations skipped (simulation)"
+          echo "Migrations skipped (simulation)"
 
       - name: Generate Cloud Run YAML from variables
         run: |
