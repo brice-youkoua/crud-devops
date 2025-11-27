@@ -23,8 +23,10 @@ jobs:
 
       # ===== Secrets =====
       DOCKER_USERNAME: ${{ secrets.DOCKER_HUB_USERNAME }}
+      DOCKER_PASSWORD: ${{ secrets.DOCKER_HUB_PASSWORD }}
       DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
       GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+      GCP_SA_KEY: ${{ secrets.GCP_SA_KEY }}
 
     steps:
       - name: Checkout repository
@@ -57,11 +59,16 @@ jobs:
           docker tag $DOCKER_USERNAME/fluent-bit:$VERSION $DOCKER_USERNAME/fluent-bit:latest
           docker push $DOCKER_USERNAME/fluent-bit:latest
 
-      - name: Setup Google Cloud SDK
-        uses: google-github-actions/setup-gcloud@v1
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
         with:
-          service_account_key: ${{ secrets.GCP_SA_KEY }}
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      - name: Setup Google Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+        with:
           project_id: ${{ secrets.GCP_PROJECT_ID }}
+          export_default_credentials: true
 
       - name: Simulate Flyway migrations
         run: |
@@ -69,19 +76,19 @@ jobs:
           echo "JDBC_URL would be: jdbc:mysql://${DB_HOST}:${DB_PORT}/${DB_NAME}"
           echo "DB_USER: $DB_USER"
           echo "Migrations folder: $PWD/db/migrations"
-          echo " Migrations skipped (simulation)"
+          echo "✅ Migrations skipped (simulation)"
 
-      - name: Generate Cloud Run YAML from variables
+      - name: Replace variables in cloud-run-service.yaml
         run: |
           cp cloud-run-service.yaml cloud-run-service.generated.yaml
-          sed -i "s/{{DOCKER_USERNAME}}/$DOCKER_USERNAME/g" cloud-run-service.generated.yaml
-          sed -i "s/{{VERSION}}/$VERSION/g" cloud-run-service.generated.yaml
-          sed -i "s/{{CLOUD_RUN_SERVICE_NAME}}/$CLOUD_RUN_SERVICE_NAME/g" cloud-run-service.generated.yaml
-          sed -i "s/{{DB_HOST}}/$DB_HOST/g" cloud-run-service.generated.yaml
-          sed -i "s/{{DB_USER}}/$DB_USER/g" cloud-run-service.generated.yaml
-          sed -i "s/{{DB_PASSWORD}}/$DB_PASSWORD/g" cloud-run-service.generated.yaml
-          sed -i "s/{{DB_NAME}}/$DB_NAME/g" cloud-run-service.generated.yaml
-          sed -i "s#{{LOKI_URL}}#$LOKI_URL#g" cloud-run-service.generated.yaml
+          sed -i "s|__IMAGE_URI__|docker.io/$DOCKER_USERNAME/crud-api:$VERSION|g" cloud-run-service.generated.yaml
+          sed -i "s|__DB_HOST__|$DB_HOST|g" cloud-run-service.generated.yaml
+          sed -i "s|__DB_NAME__|$DB_NAME|g" cloud-run-service.generated.yaml
+          sed -i "s|__DB_USER__|$DB_USER|g" cloud-run-service.generated.yaml
+          sed -i "s|__DB_PASSWORD__|$DB_PASSWORD|g" cloud-run-service.generated.yaml
+          sed -i "s|__LOKI_URL__|$LOKI_URL|g" cloud-run-service.generated.yaml
+          sed -i "s|__REGION__|$REGION|g" cloud-run-service.generated.yaml
+          sed -i "s|__PROJECT_ID__|$GCP_PROJECT_ID|g" cloud-run-service.generated.yaml
 
       - name: Deploy to Cloud Run
         run: |
