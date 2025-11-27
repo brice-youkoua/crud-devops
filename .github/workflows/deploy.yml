@@ -3,7 +3,7 @@ name: CI/CD CRUD API
 on:
   push:
     tags:
-      - 'v.*.*'
+      - 'v*.*.*'
   workflow_dispatch:
 
 jobs:
@@ -11,30 +11,25 @@ jobs:
     runs-on: ubuntu-latest
 
     env:
-      # ===== Repository Variables =====
-      CLOUD_RUN_SERVICE_NAME: ${{ vars.CLOUD_RUN_SERVICE_NAME }}
-      REGION: ${{ vars.REGION }}
+      CLOUD_RUN_SERVICE_NAME: crud-api-service
+      REGION: europe-west1
       VERSION: ${{ github.ref_name }}
-      DB_HOST: ${{ vars.DB_HOST }}
-      DB_PORT: ${{ vars.DB_PORT }}
-      DB_USER: ${{ vars.DB_USER }}
-      DB_NAME: ${{ vars.DB_NAME }}
-      LOKI_URL: ${{ vars.LOKI_URL }}
 
       # ===== Secrets =====
       DOCKER_USERNAME: ${{ secrets.DOCKER_HUB_USERNAME }}
       DOCKER_PASSWORD: ${{ secrets.DOCKER_HUB_PASSWORD }}
-      DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
-      GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+      GCP_PROJECT_ID: cdprojet-479421
       GCP_SA_KEY: ${{ secrets.GCP_SA_KEY }}
+      DB_HOST: ${{ secrets.DB_HOST }}
+      DB_PORT: ${{ secrets.DB_PORT }}
+      DB_USER: ${{ secrets.DB_USER }}
+      DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
+      DB_NAME: ${{ secrets.DB_NAME }}
+      LOKI_URL: ${{ secrets.LOKI_URL }}
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v3
-
-      - name: Extract tag version
-        id: extract_version
-        run: echo "VERSION=${GITHUB_REF##*/}" >> $GITHUB_ENV
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v2
@@ -47,6 +42,7 @@ jobs:
 
       - name: Build & push CRUD API Docker image
         run: |
+          echo "Building CRUD API image..."
           docker build -t $DOCKER_USERNAME/crud-api:$VERSION ./App
           docker push $DOCKER_USERNAME/crud-api:$VERSION
           docker tag $DOCKER_USERNAME/crud-api:$VERSION $DOCKER_USERNAME/crud-api:latest
@@ -54,12 +50,13 @@ jobs:
 
       - name: Build & push Fluent Bit Docker image
         run: |
+          echo "Building Fluent Bit image..."
           docker build -t $DOCKER_USERNAME/fluent-bit:$VERSION ./fluent-bit
           docker push $DOCKER_USERNAME/fluent-bit:$VERSION
           docker tag $DOCKER_USERNAME/fluent-bit:$VERSION $DOCKER_USERNAME/fluent-bit:latest
           docker push $DOCKER_USERNAME/fluent-bit:latest
 
-      - name: Authenticate to Google Cloud
+      - name: Authenticate with Google Cloud
         uses: google-github-actions/auth@v2
         with:
           credentials_json: ${{ secrets.GCP_SA_KEY }}
@@ -67,28 +64,27 @@ jobs:
       - name: Setup Google Cloud SDK
         uses: google-github-actions/setup-gcloud@v2
         with:
-          project_id: ${{ secrets.GCP_PROJECT_ID }}
+          project_id: ${{ env.GCP_PROJECT_ID }}
           export_default_credentials: true
 
       - name: Simulate Flyway migrations
         run: |
           echo "Simulating Flyway migrations..."
-          echo "JDBC_URL would be: jdbc:mysql://${DB_HOST}:${DB_PORT}/${DB_NAME}"
+          echo "JDBC_URL: jdbc:mysql://${DB_HOST}:${DB_PORT}/${DB_NAME}"
           echo "DB_USER: $DB_USER"
-          echo "Migrations folder: $PWD/db/migrations"
           echo "✅ Migrations skipped (simulation)"
 
-      - name: Replace variables in cloud-run-service.yaml
+      - name: Replace variables in Cloud Run YAML
         run: |
           cp cloud-run-service.yaml cloud-run-service.generated.yaml
-          sed -i "s|__IMAGE_URI__|docker.io/$DOCKER_USERNAME/crud-api:$VERSION|g" cloud-run-service.generated.yaml
-          sed -i "s|__DB_HOST__|$DB_HOST|g" cloud-run-service.generated.yaml
-          sed -i "s|__DB_NAME__|$DB_NAME|g" cloud-run-service.generated.yaml
-          sed -i "s|__DB_USER__|$DB_USER|g" cloud-run-service.generated.yaml
-          sed -i "s|__DB_PASSWORD__|$DB_PASSWORD|g" cloud-run-service.generated.yaml
-          sed -i "s|__LOKI_URL__|$LOKI_URL|g" cloud-run-service.generated.yaml
-          sed -i "s|__REGION__|$REGION|g" cloud-run-service.generated.yaml
-          sed -i "s|__PROJECT_ID__|$GCP_PROJECT_ID|g" cloud-run-service.generated.yaml
+          sed -i "s|{{DOCKER_USERNAME}}|$DOCKER_USERNAME|g" cloud-run-service.generated.yaml
+          sed -i "s|{{VERSION}}|$VERSION|g" cloud-run-service.generated.yaml
+          sed -i "s|{{CLOUD_RUN_SERVICE_NAME}}|$CLOUD_RUN_SERVICE_NAME|g" cloud-run-service.generated.yaml
+          sed -i "s|{{DB_HOST}}|$DB_HOST|g" cloud-run-service.generated.yaml
+          sed -i "s|{{DB_USER}}|$DB_USER|g" cloud-run-service.generated.yaml
+          sed -i "s|{{DB_PASSWORD}}|$DB_PASSWORD|g" cloud-run-service.generated.yaml
+          sed -i "s|{{DB_NAME}}|$DB_NAME|g" cloud-run-service.generated.yaml
+          sed -i "s|{{LOKI_URL}}|$LOKI_URL|g" cloud-run-service.generated.yaml
 
       - name: Deploy to Cloud Run
         run: |
@@ -97,7 +93,7 @@ jobs:
             --region "$REGION" \
             --platform managed \
             --allow-unauthenticated \
-            --image "$DOCKER_USERNAME/crud-api:$VERSION"
+            --image "docker.io/$DOCKER_USERNAME/crud-api:$VERSION"
 
       - name: Ensure service is publicly invokable
         run: |
